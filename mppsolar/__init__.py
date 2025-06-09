@@ -23,6 +23,7 @@ from mppsolar.daemon.daemon import (
     daemonize,
 )
 from mppsolar.libs.mqttbrokerc import MqttBroker
+from mppsolar.libs.mqttbroker import setup_device_mqtt_commands, get_mqtt_command_info
 from mppsolar.outputs import get_outputs, list_outputs
 from mppsolar.protocols import list_protocols
 
@@ -479,6 +480,7 @@ def main():
             push_url = config[section].get("push_url", fallback=push_url)
             prom_output_dir = config[section].get("prom_output_dir", fallback=prom_output_dir)
             mqtt_topic = config[section].get("mqtt_topic", fallback=mqtt_topic)
+            mqtt_cmds = config[section].get("mqtt_cmds", fallback="")
             section_dev = config[section].get("dev", fallback=None)
             #
             device_class = get_device_class(_type)
@@ -499,6 +501,10 @@ def main():
                 push_url=push_url,
                 prom_output_dir=prom_output_dir,
             )
+            if mqtt_cmds:
+                log.info(f"Setting up MQTT commands for device {name}: {mqtt_cmds}")
+                setup_device_mqtt_commands(device, mqtt_broker, mqtt_cmds, name)
+
             # build array of commands
             commands = _command.split("#")
 
@@ -584,6 +590,19 @@ def main():
     log_process_info("AFTER_DAEMON_INITIALIZE", log.info)
     daemon.notify("Service Initializing ...")
     log_process_info("AFTER_DAEMON_NOTIFY", log.info)
+
+
+    if args.daemon:
+        mqtt_info = get_mqtt_command_info()
+        if mqtt_info:
+            print("MQTT Command Handlers configured:")
+            for device_name, info in mqtt_info.items():
+                print(f"  Device: {device_name}")
+                print(f"    Command Topic: {info['command_topic']}")
+                print(f"    Response Topic: {info['response_topic']}")
+                print(f"    Allowed Commands: {', '.join(info['allowed_commands'])}")
+        else:
+            print("No MQTT command handlers configured")
 
 
     while True:
