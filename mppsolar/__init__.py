@@ -3,6 +3,7 @@ import os
 import logging
 import time
 import sys
+import atexit
 from argparse import ArgumentParser
 from platform import python_version
 
@@ -22,8 +23,13 @@ from mppsolar.daemon.daemon import (
     setup_daemon_logging,
     daemonize,
 )
-from mppsolar.libs.mqttbrokerc import MqttBroker
-from mppsolar.libs.mqttbroker import setup_device_mqtt_commands, get_mqtt_command_info
+from mppsolar.libs.mqttbrokerc import MqttTransport
+from mppsolar.libs.mqttbroker import (
+    get_manager,
+    setup_device_mqtt_commands,
+    get_mqtt_command_info,
+    cleanup_mqtt_commands,
+)
 from mppsolar.outputs import get_outputs, list_outputs
 from mppsolar.protocols import list_protocols
 
@@ -225,6 +231,7 @@ def main():
     )
     parser.add_argument("-I", "--info", action="store_true", help="Enable Info and above level messages")
 
+    atexit.register(cleanup_mqtt_commands)
     args = parser.parse_args()
     prog_name = parser.prog
     if prog_name is None:
@@ -278,10 +285,10 @@ def main():
         """Log detailed process information for debugging"""
         if log_func is None:
             log_func = print
-    
+
         pid = os.getpid()
         ppid = os.getppid()
-    
+
         # Get process group and session info
         try:
             pgid = os.getpgid(0)
@@ -289,12 +296,13 @@ def main():
         except:
             pgid = "unknown"
             sid = "unknown"
-    
+
+
         # Check if we're the process group leader
         is_leader = (pid == pgid)
-    
+
         log_func(f"[{label}] PID: {pid}, PPID: {ppid}, PGID: {pgid}, SID: {sid}, Leader: {is_leader}")
-    
+
         # Log command line that started this process
         try:
             with open(f'/proc/{pid}/cmdline', 'r') as f:
@@ -302,6 +310,7 @@ def main():
             log_func(f"[{label}] Command: {cmdline}")
         except:
             log_func(f"[{label}] Command: {' '.join(sys.argv)}")
+
 
     def log_debug_context(label, args):
         log.debug(f"[{label}] sys.argv = {sys.argv}")
@@ -330,6 +339,7 @@ def main():
                 log.warning(f"Failed to detect daemon type: {e}, falling back to OpenRC")
                 daemon_type = DaemonType.OPENRC
 
+
             daemon = get_daemon(daemontype=daemon_type)
 
             if hasattr(daemon, 'set_pid_file_path') and args.pidfile:
@@ -343,6 +353,7 @@ def main():
 
             log.info("Attempting traditional daemonization...")
             try:
+
 #                 daemonize()
                 log.info("Daemonized successfully")
                 # Re-setup logging for the daemonized process
@@ -403,8 +414,9 @@ def main():
             sys.exit(1)
 
 
+
     # mqttbroker setup
-    mqtt_broker = MqttBroker(
+    mqtt_broker = MqttTransport(
         config={
             "name": args.mqttbroker,
             "port": args.mqttport,
@@ -453,12 +465,22 @@ def main():
         # Process setup section
         pause = config["SETUP"].getint("pause", fallback=60)
         # Overide mqtt_broker settings
-        mqtt_broker.update("name", config["SETUP"].get("mqtt_broker", fallback=None))
-        mqtt_broker.update("port", config["SETUP"].getint("mqtt_port", fallback=None))
-        mqtt_broker.update("username", config["SETUP"].get("mqtt_user", fallback=None))
-        mqtt_broker.update("password", config["SETUP"].get("mqtt_pass", fallback=None))
+        mqtt_broker = MqttTransport(
+            broker=config["SETUP"]["mqtt_broker"],
+            port=int(config["SETUP"].get("mqtt_port", 1883)),
+            username=config["SETUP"].get("mqtt_user"),
+            password=config["SETUP"].get("mqtt_pass"),
+        )
+        mqtt_transport = MqttTransport(config=mqtt_broker_config)
+        mqtt_manager = get_manager(mqtt_transport=mqtt_transport)
+
+#         mqtt_broker.update("name", config["SETUP"].get("mqtt_broker", fallback=None))
+#         mqtt_broker.update("port", config["SETUP"].getint("mqtt_port", fallback=None))
+#         mqtt_broker.update("username", config["SETUP"].get("mqtt_user", fallback=None))
+#         mqtt_broker.update("password", config["SETUP"].get("mqtt_pass", fallback=None))
         log_file_path = config["SETUP"].get("log_file", fallback="/var/log/mpp-solar.log")
         sections.remove("SETUP")
+
 
         # Process 'command' sections
         for section in sections:
@@ -480,7 +502,7 @@ def main():
             push_url = config[section].get("push_url", fallback=push_url)
             prom_output_dir = config[section].get("prom_output_dir", fallback=prom_output_dir)
             mqtt_topic = config[section].get("mqtt_topic", fallback=mqtt_topic)
-            mqtt_cmds = config[section].get("mqtt_cmds", fallback="")
+            mqtt_allowed_cmds = config[section].get("mqtt_allowed_cmds", fallback="")
             section_dev = config[section].get("dev", fallback=None)
             #
             device_class = get_device_class(_type)
@@ -501,9 +523,21 @@ def main():
                 push_url=push_url,
                 prom_output_dir=prom_output_dir,
             )
-            if mqtt_cmds:
-                log.info(f"Setting up MQTT commands for device {name}: {mqtt_cmds}")
-                setup_device_mqtt_commands(device, mqtt_broker, mqtt_cmds, name)
+            mqtt_allowed_cmds = config[section].get("mqtt_cmds", fallback="")
+
+            # The device class __init__ will instantiate the port communications and protocol classes
+            device = device_class(
+                name=name,
+                port=port,
+                protocol=protocol,
+                # ... other device args
+            )
+            
+            # MODIFICATION: Simplified setup call. No need to pass the transport/broker anymore.
+            if mqtt_allowed_cmds:
+                log.info(f"Setting up MQTT commands for device {name}: {mqtt_allowed_cmds}")
+                setup_device_mqtt_commands(device, mqtt_allowed_cmds, name)
+
 
             # build array of commands
             commands = _command.split("#")
@@ -601,8 +635,30 @@ def main():
                 print(f"    Command Topic: {info['command_topic']}")
                 print(f"    Response Topic: {info['response_topic']}")
                 print(f"    Allowed Commands: {', '.join(info['allowed_commands'])}")
+
+            manager = get_manager()
+            if manager:
+                manager.connect()
         else:
             print("No MQTT command handlers configured")
+
+#             # Start the MQTT transport layer
+#             mqtt_transport = MqttTransport(
+#                 broker=config["SETUP"]["mqtt_broker"],
+#                 port=int(config["SETUP"].get("mqtt_port", 1883)),
+#                 username=config["SETUP"].get("mqtt_user"),
+#                 password=config["SETUP"].get("mqtt_pass"),
+#             )
+# 
+#             # Set up the command bridge with the transport
+#             mqtt_bridge = MqttCommandBridge(
+#                 mqtt_transport=mqtt_transport,
+#                 command_info=mqtt_info
+#             )
+#             # Start listening
+#             mqtt_transport.connect()
+#         else:
+#             print("No MQTT command handlers configured")
 
 
     while True:
@@ -661,4 +717,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+    

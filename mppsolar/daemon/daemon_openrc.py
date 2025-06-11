@@ -16,7 +16,6 @@ except ImportError:
     HAS_PSUTIL = False
 
 from mppsolar.daemon.daemon import Daemon
-from mppsolar.libs.mqttbroker import cleanup_mqtt_commands
 
 # Set-up logger
 log = logging.getLogger("daemon_openrc")
@@ -67,7 +66,6 @@ class DaemonOpenRC(Daemon):
 
         # Register cleanup function to run on exit
         atexit.register(self._cleanup_pid_file)
-        atexit.register(cleanup_mqtt_commands)
 
         # Set up signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
