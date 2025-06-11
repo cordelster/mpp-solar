@@ -325,12 +325,18 @@ def main():
                 log.warning(f"Failed to detect daemon type: {e}, falling back to OpenRC")
                 daemon_type = DaemonType.OPENRC
             daemon = get_daemon(daemontype=daemon_type)
-            if hasattr(daemon, 'set_pid_file_path') and args.pidfile:
-                daemon.set_pid_file_path(args.pidfile)
+            
+            # Properly set PID file path
+            if args.pidfile:
+                if hasattr(daemon, 'set_pid_file_path'):
+                    daemon.set_pid_file_path(args.pidfile)
+                elif hasattr(daemon, 'pid_file_path'):
+                    daemon.pid_file_path = args.pidfile
                 log.info(f"Using custom PID file: {args.pidfile}")
             elif hasattr(daemon, 'pid_file_path'):
                 daemon.pid_file_path = "/tmp/mpp-solar.pid" if os.geteuid() != 0 else "/var/run/mpp-solar.pid"
                 log.info(f"Using default PID file: {daemon.pid_file_path}")
+                
             daemon.keepalive = 60
             log.info("Attempting traditional daemonization...")
             try:
@@ -424,7 +430,7 @@ def main():
 
         # Check for SETUP section
         if "SETUP" not in config:
-            log.error(f"Config File '{args.configfile}' is missing the required 'SETUP' section.")
+            log.error(f"Config File '{args.configfile}'  is missing the required 'SETUP' section or does not exist")
             exit(1)
 
         # Process setup section
@@ -444,7 +450,6 @@ def main():
         # Build a single mqtt_broker object for legacy output processors
         mqtt_broker = MqttTransport(config=mqtt_broker_config)
         mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
-
 
         sections = config.sections()
         sections.remove("SETUP")
@@ -481,7 +486,7 @@ def main():
             device_class = get_device_class(_type)
             log.debug(f"device_class {device_class}")
             
-            # Instantiate the device
+            # The device class __init__ will instantiate the port communications and protocol classes
             device = device_class(
                 name=name,
                 port=port,
@@ -509,10 +514,21 @@ def main():
             for command in commands:
                 _commands.append((device, command, tag, outputs, args.filter, args.exclfilter, section_dev))
             log.debug(f"Commands from config file: {_commands}")
+            log.debug(f"[DAEMON LOOP INIT] args.daemon={args.daemon}, pause={pause}, commands={_commands}")
+            if args.daemon:
+                print(f"Config file: {args.configfile}")
+                print(f"Config setting - pause: {pause}")
+                # print(f"Config setting - mqtt_broker: {mqtt_broker}, port: {mqtt_port}")
+                print(f"Config setting - command sections found: {len(sections)}")
+            else:
+                log.info(f"Config file: {args.configfile}")
+                log.info(f"Config setting - pause: {pause}")
+                # log.info(f"Config setting - mqtt_broker: {mqtt_broker}, port: {mqtt_port}")
+                log.info(f"Config setting - command sections found: {len(sections)}")
 
     else:
         # No configfile specified - build from args
-        log.info(f'Creating device "{args.name}" (type: "{s_prog_name}") on port "{args.port}" ...')
+        log.info(f'Creating device "{args.name}" (type: "{s_prog_name}") on port "{args.port} (porttype={args.porttype})" using protocol "{args.protocol}"')
 
         # Setup MQTT from args if needed for command listening (not just output)
 #         if args.daemon: # Assuming commands are only needed in daemon mode
@@ -543,13 +559,14 @@ def main():
             udp_port=udp_port,
             mongo_url=mongo_url,
             mongo_db=mongo_db,
-            push_url=args.pushurl,
-            prom_output_dir=args.prom_output_dir,
+            push_url=push_url,
+            prom_output_dir=prom_output_dir,
         )
 
         # Determine commands from args
         commands = []
         if args.command == "help":
+            keep_case = True
             commands.append("list_commands")
         elif args.getstatus:
             commands.append("get_status")
@@ -574,7 +591,9 @@ def main():
             _commands.append((device, command, tag, outputs, args.filter, args.exclfilter, args.dev))
         log.debug(f"Commands from args: {_commands}")
 
+    # ------------------------
     # Daemon setup and logging
+    # ------------------------
     daemon = setup_daemon_if_requested(args, log_file_path=log_file_path)
     log.info(daemon)
     DAEMON_MODE = args.daemon
@@ -584,6 +603,11 @@ def main():
     daemon.notify("Service Initializing ...")
     log.debug("AFTER_DAEMON_NOTIFY")
 
+    # Connect the legacy mqtt_broker for output processors  
+    if mqtt_broker:
+        log.info("Connecting legacy MQTT broker for output processors...")
+        mqtt_broker.connect()
+        
     # If in daemon mode, print MQTT info and connect the manager
     if DAEMON_MODE:
         mqtt_info = get_mqtt_command_info()

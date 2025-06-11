@@ -23,11 +23,12 @@ class MqttTransport:
 
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
+        self._isConnected = False
 
         if self.username and self.password:
             self.client.username_pw_set(self.username, self.password)
-            
-    # Keep the rest of the file as-is...
+
+
     def set(self, key, value):
         setattr(self, key, value)
         
@@ -37,9 +38,29 @@ class MqttTransport:
 
     def on_connect(self, client, userdata, flags, rc):
         log.info(f"[MQTT] Connected to broker {self.broker}:{self.port} with result code {rc}")
+        # 0: Connection successful
+        # 1: Connection refused - incorrect protocol version
+        # 2: Connection refused - invalid client identifier
+        # 3: Connection refused - server unavailable
+        # 4: Connection refused - bad username or password
+        # 5: Connection refused - not authorised
+        # 6-255: Currently unused.
+        connection_result = [
+            "Connection successful",
+            "Connection refused - incorrect protocol version",
+            "Connection refused - invalid client identifier",
+            "Connection refused - server unavailable",
+            "Connection refused - bad username or password",
+            "Connection refused - not authorised",
+        ]
+        log.debug(f"MqttBroker connection returned result: {rc} {connection_result[rc]}")
         for topic in self.command_handlers:
             self.client.subscribe(topic)
             log.info(f"[MQTT] Subscribed to: {topic}")
+        if rc == 0:
+            self._isConnected = True
+            return
+        self._isConnected = False
 
     def on_message(self, client, userdata, msg):
         topic = msg.topic
@@ -65,16 +86,20 @@ class MqttTransport:
     def publishMultiple(self, data):
         """
         Publishes multiple messages to the MQTT broker.
-        Expects a list of dictionaries, where each dictionary has a 'topic' and 'payload'.
+        Expects a list of dictionaries, where each dictionary has a 'topic', 'payload', and optionally 'retain'.
         """
         if not self.client.is_connected():
             log.error("[MQTT] Cannot publish multiple, client not connected.")
             return
+
         for msg in data:
-            self.publish(msg["topic"], msg["payload"])
+            topic = msg.get("topic")
+            payload = msg.get("payload")
+            retain = msg.get("retain", True)
+
             if topic and payload is not None:
                 log.debug(f"[MQTT] Publishing to {topic}: {payload}")
-                self.client.publish(topic, payload, retain=True)
+                self.client.publish(topic, payload, retain=retain)
             else:
                 log.warning(f"[MQTT] Skipping invalid message in multi-publish: {msg}")
 
@@ -89,4 +114,5 @@ class MqttTransport:
     def disconnect(self):
         self.client.loop_stop()
         self.client.disconnect()
+        self._isConnected = False
         log.info("Disconnected from MQTT broker.")# mqttbrokerc.py
