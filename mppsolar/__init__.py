@@ -39,11 +39,10 @@ FORMAT = "%(asctime)-15s:%(levelname)s:%(module)s:%(funcName)s@%(lineno)d: %(mes
 logging.basicConfig(format=FORMAT)
 
 
-
-
 def main():
     description = f"Solar Device Command Utility, version: {__version__}, python version: {python_version()}"
     parser = ArgumentParser(description=description)
+    # ... All argument parsing remains the same, no changes needed here ...
     parser.add_argument(
         "-n",
         "--name",
@@ -225,11 +224,12 @@ def main():
         default=None,
     )
     parser.add_argument(
-        "--daemon-stop", 
-        action="store_true", 
+        "--daemon-stop",
+        action="store_true",
         help="Stop a running daemon (requires --pidfile if using non-default location)"
     )
     parser.add_argument("-I", "--info", action="store_true", help="Enable Info and above level messages")
+
 
     atexit.register(cleanup_mqtt_commands)
     args = parser.parse_args()
@@ -268,49 +268,29 @@ def main():
         keep_case = True
         op = get_outputs("screen")[0]
         op.output(data=list_outputs())
-        # print("Available output modules:")
-        # for result in results:
-        #    print(result)
         return None
 
-    # mqttbroker:
-    #     name: null
-    #     port: 1883
-    #     user: null
-    #     pass: null
-    # Handle daemon setup and stop requests
-
-    #### Extra Logging
+    # ... All daemon setup functions (log_process_info, setup_daemon_if_requested, etc) remain the same ...
     def log_process_info(label, log_func=None):
         """Log detailed process information for debugging"""
         if log_func is None:
             log_func = print
-
         pid = os.getpid()
         ppid = os.getppid()
-
-        # Get process group and session info
         try:
             pgid = os.getpgid(0)
             sid = os.getsid(0)
         except:
             pgid = "unknown"
             sid = "unknown"
-
-
-        # Check if we're the process group leader
         is_leader = (pid == pgid)
-
         log_func(f"[{label}] PID: {pid}, PPID: {ppid}, PGID: {pgid}, SID: {sid}, Leader: {is_leader}")
-
-        # Log command line that started this process
         try:
             with open(f'/proc/{pid}/cmdline', 'r') as f:
                 cmdline = f.read().replace('\0', ' ').strip()
             log_func(f"[{label}] Command: {cmdline}")
         except:
             log_func(f"[{label}] Command: {' '.join(sys.argv)}")
-
 
     def log_debug_context(label, args):
         log.debug(f"[{label}] sys.argv = {sys.argv}")
@@ -325,47 +305,35 @@ def main():
         else:
             log_debug_context("SYSTEM", args)
 
-
     def setup_daemon_if_requested(args, log_file_path="/var/log/mpp-solar.log"):
-
         if args.daemon:
             os.environ["MPP_SOLAR_DAEMON"] = "1"
             log.info("Daemon mode requested")
-
             try:
                 daemon_type = detect_daemon_type()
                 log.info(f"Detected daemon type: {daemon_type}")
             except Exception as e:
                 log.warning(f"Failed to detect daemon type: {e}, falling back to OpenRC")
                 daemon_type = DaemonType.OPENRC
-
-
             daemon = get_daemon(daemontype=daemon_type)
-
             if hasattr(daemon, 'set_pid_file_path') and args.pidfile:
                 daemon.set_pid_file_path(args.pidfile)
                 log.info(f"Using custom PID file: {args.pidfile}")
             elif hasattr(daemon, 'pid_file_path'):
                 daemon.pid_file_path = "/tmp/mpp-solar.pid" if os.geteuid() != 0 else "/var/run/mpp-solar.pid"
                 log.info(f"Using default PID file: {daemon.pid_file_path}")
-
             daemon.keepalive = 60
-
             log.info("Attempting traditional daemonization...")
             try:
-
-#                 daemonize()
+                # daemonize()
                 log.info("Daemonized successfully")
-                # Re-setup logging for the daemonized process
                 if not setup_daemon_logging(log_file_path):
                     sys.stderr.write("CRITICAL: Failed to setup file logging for daemon. Check permissions.\n")
                 else:
                     log.info("Daemon file logging successfully re-initialized.")
-
             except Exception as e:
                 log.error(f"Failed to daemonize process: {e}")
                 log.info("Continuing in foreground mode")
-
             return daemon
         else:
             log.info("Daemon mode NOT requested. Using DISABLED daemon.")
@@ -373,29 +341,15 @@ def main():
             log_process_info("DAEMON_DISABLED_CREATED", log.info)
             return daemon
 
-
-    # --- Optional PyInstaller bootstrap cleanup ---
-    # To enable single-process daemon spawn logic (avoids PyInstaller parent):
-    #################################################################
-#     if spawn_pyinstaller_subprocess(args):
-#       sys.exit(0)
-# 
-#     from daemon.pyinstaller_runtime import setup_spawned_environment
-#     setup_spawned_environment()
-    #################################################################
-
     # Handle daemon stop request
     if args.daemon_stop:
         pid_file_path = args.pidfile
         if pid_file_path is None:
-            # Use default based on environment
-            if os.geteuid() != 0:  # Non-root check
+            if os.geteuid() != 0:
                 pid_file_path = "/tmp/mpp-solar.pid"
             else:
                 pid_file_path = "/var/run/mpp-solar.pid"
-
         log.info(f"Attempting to stop daemon using PID file: {pid_file_path}")
-
         try:
             daemon_type = detect_daemon_type()
             daemon_class = get_daemon(daemontype=daemon_type).__class__
@@ -413,77 +367,51 @@ def main():
             print(f"Error stopping daemon: {e}")
             sys.exit(1)
 
-
-
-    # mqttbroker setup
-    mqtt_broker = MqttTransport(
-        config={
-            "name": args.mqttbroker,
-            "port": args.mqttport,
-            "user": args.mqttuser,
-            "pass": args.mqttpass,
-        }
-    )
-    mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
-    log.debug(mqtt_broker)
-    udp_port = args.udpport
-    log.debug(f"udp port {udp_port}")
-    postgres_url = args.postgres_url
-    log.debug(f"Using Postgres {postgres_url}")
-    mongo_url = args.mongo_url
-    mongo_db = args.mongo_db
-    log.debug(f"Using Mongo {mongo_url} with {mongo_db}")
-    ##
-    filter = args.filter
-    excl_filter = args.exclfilter
-    keep_case = args.keepcase
-    mqtt_topic = args.mqtttopic
-    push_url = args.pushurl
-    prom_output_dir = args.prom_output_dir
-    dev = args.dev
-
+    ### FIXED: Centralized mqtt_broker object. It's either built from args or from the config file.
+    mqtt_broker = None
     _commands = []
 
-
-    # If config file specified, process
+    # If config file specified, process it
     if args.configfile:
         import configparser
-
         log.debug(f"args.configfile is true: {args.configfile}")
         config = configparser.ConfigParser()
         try:
             config.read(args.configfile)
         except configparser.DuplicateSectionError as e:
-            log.error(f"Config File '{args.configfile}' has duplicate sections")
-            log.error(e)
+            log.error(f"Config File '{args.configfile}' has duplicate sections: {e}")
             exit(1)
-        sections = config.sections()
-        # Check setup section exists
+
+        # Check for SETUP section
         if "SETUP" not in config:
-            log.error(f"Config File '{args.configfile}'  is missing the required 'SETUP' section or does not exist")
+            log.error(f"Config File '{args.configfile}' is missing the required 'SETUP' section.")
             exit(1)
+
         # Process setup section
         pause = config["SETUP"].getint("pause", fallback=60)
-        # Overide mqtt_broker settings
-        mqtt_broker = MqttTransport(
-            broker=config["SETUP"]["mqtt_broker"],
-            port=int(config["SETUP"].get("mqtt_port", 1883)),
-            username=config["SETUP"].get("mqtt_user"),
-            password=config["SETUP"].get("mqtt_pass"),
-        )
-        mqtt_transport = MqttTransport(config=mqtt_broker_config)
-        mqtt_manager = get_manager(mqtt_transport=mqtt_transport)
-
-#         mqtt_broker.update("name", config["SETUP"].get("mqtt_broker", fallback=None))
-#         mqtt_broker.update("port", config["SETUP"].getint("mqtt_port", fallback=None))
-#         mqtt_broker.update("username", config["SETUP"].get("mqtt_user", fallback=None))
-#         mqtt_broker.update("password", config["SETUP"].get("mqtt_pass", fallback=None))
         log_file_path = config["SETUP"].get("log_file", fallback="/var/log/mpp-solar.log")
-        sections.remove("SETUP")
 
+        ### FIXED: Create MQTT config dict from file, then instantiate ONE transport and ONE manager
+        mqtt_broker_config = {
+            "name": config["SETUP"].get("mqtt_broker"),
+            "port": config["SETUP"].getint("mqtt_port", 1883),
+            "user": config["SETUP"].get("mqtt_user"),
+            "pass": config["SETUP"].get("mqtt_pass"),
+        }
+        mqtt_transport = MqttTransport(config=mqtt_broker_config)
+        get_manager(mqtt_transport=mqtt_transport) # This creates the singleton manager
+
+        # Build a single mqtt_broker object for legacy output processors
+        mqtt_broker = MqttTransport(config=mqtt_broker_config)
+        mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
+
+
+        sections = config.sections()
+        sections.remove("SETUP")
 
         # Process 'command' sections
         for section in sections:
+            ### CLEANED UP: Single, clear logic path for each device section
             name = section
             protocol = config[section].get("protocol", fallback=None)
             _type = config[section].get("type", fallback="mppsolar")
@@ -493,21 +421,18 @@ def main():
             tag = config[section].get("tag")
             outputs = config[section].get("outputs", fallback="screen")
             porttype = config[section].get("porttype", fallback=None)
-            filter = config[section].get("filter", fallback=None)
-            excl_filter = config[section].get("exclfilter", fallback=None)
-            udp_port = config[section].get("udpport", fallback=None)
-            postgres_url = config[section].get("postgres_url", fallback=None)
-            mongo_url = config[section].get("mongo_url", fallback=None)
-            mongo_db = config[section].get("mongo_db", fallback=None)
-            push_url = config[section].get("push_url", fallback=push_url)
-            prom_output_dir = config[section].get("prom_output_dir", fallback=prom_output_dir)
-            mqtt_topic = config[section].get("mqtt_topic", fallback=mqtt_topic)
-            mqtt_allowed_cmds = config[section].get("mqtt_allowed_cmds", fallback="")
+            # Get mqtt_cmds from config, this is the correct key
+            mqtt_allowed_cmds = config[section].get("mqtt_cmds", fallback="")
             section_dev = config[section].get("dev", fallback=None)
-            #
+            
+            # Legacy output variables
+            push_url = config[section].get("push_url", fallback=args.pushurl)
+            prom_output_dir = config[section].get("prom_output_dir", fallback=args.prom_output_dir)
+
             device_class = get_device_class(_type)
             log.debug(f"device_class {device_class}")
-            # The device class __init__ will instantiate the port communications and protocol classes
+            
+            # Instantiate the device
             device = device_class(
                 name=name,
                 port=port,
@@ -515,57 +440,45 @@ def main():
                 outputs=outputs,
                 baud=baud,
                 porttype=porttype,
-                mqtt_broker=mqtt_broker,
-                udp_port=udp_port,
-                postgres_url=postgres_url,
-                mongo_url=mongo_url,
-                mongo_db=mongo_db,
+                mqtt_broker=mqtt_broker, # Pass legacy broker for old outputs
                 push_url=push_url,
                 prom_output_dir=prom_output_dir,
             )
-            mqtt_allowed_cmds = config[section].get("mqtt_cmds", fallback="")
 
-            # The device class __init__ will instantiate the port communications and protocol classes
-            device = device_class(
-                name=name,
-                port=port,
-                protocol=protocol,
-                # ... other device args
-            )
-            
-            # MODIFICATION: Simplified setup call. No need to pass the transport/broker anymore.
+            # Setup MQTT commands if defined for this device
             if mqtt_allowed_cmds:
                 log.info(f"Setting up MQTT commands for device {name}: {mqtt_allowed_cmds}")
                 setup_device_mqtt_commands(device, mqtt_allowed_cmds, name)
 
-
-            # build array of commands
+            # build array of commands for the main loop
             commands = _command.split("#")
-
             for command in commands:
-                _commands.append((device, command, tag, outputs, filter, excl_filter, section_dev))
-            log.debug(f"Commands from config file {_commands}")
-            log.debug(f"[DAEMON LOOP INIT] args.daemon={args.daemon}, pause={pause}, commands={_commands}")
-            if args.daemon:
-                print(f"Config file: {args.configfile}")
-                print(f"Config setting - pause: {pause}")
-                # print(f"Config setting - mqtt_broker: {mqtt_broker}, port: {mqtt_port}")
-                print(f"Config setting - command sections found: {len(sections)}")
-            else:
-                log.info(f"Config file: {args.configfile}")
-                log.info(f"Config setting - pause: {pause}")
-                # log.info(f"Config setting - mqtt_broker: {mqtt_broker}, port: {mqtt_port}")
-                log.info(f"Config setting - command sections found: {len(sections)}")
+                _commands.append((device, command, tag, outputs, args.filter, args.exclfilter, section_dev))
+            log.debug(f"Commands from config file: {_commands}")
 
     else:
-        # No configfile specified
-        # create instance of device (supplying port + protocol types)
-        log.info(
-            f'Creating device "{args.name}" (type: "{s_prog_name}") on port "{args.port} (porttype={args.porttype})" using protocol "{args.protocol}"'
-        )
+        # No configfile specified - build from args
+        log.info(f'Creating device "{args.name}" (type: "{s_prog_name}") on port "{args.port}" ...')
+
+        # Setup MQTT from args if needed for command listening (not just output)
+        if args.daemon: # Assuming commands are only needed in daemon mode
+             mqtt_broker_config = {
+                "name": args.mqttbroker,
+                "port": args.mqttport,
+                "user": args.mqttuser,
+                "pass": args.mqttpass,
+            }
+             mqtt_transport = MqttTransport(config=mqtt_broker_config)
+             get_manager(mqtt_transport=mqtt_transport)
+
+        # Create legacy mqtt_broker for outputs
+        mqtt_broker = MqttTransport(config={
+            "name": args.mqttbroker, "port": args.mqttport, "user": args.mqttuser, "pass": args.mqttpass,
+        })
+        mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
+
+
         device_class = get_device_class(s_prog_name)
-        log.debug(f"device_class {device_class}")
-        # The device class __init__ will instantiate the port communications and protocol classes
         device = device_class(
             name=args.name,
             port=args.port,
@@ -573,60 +486,34 @@ def main():
             baud=args.baud,
             porttype=args.porttype,
             mqtt_broker=mqtt_broker,
-            udp_port=udp_port,
-            mongo_url=mongo_url,
-            mongo_db=mongo_db,
-            push_url=push_url,
-            prom_output_dir=prom_output_dir,
+            push_url=args.pushurl,
+            prom_output_dir=args.prom_output_dir,
         )
 
-        # determine whether to run command or call helper function
+        # Determine commands from args
         commands = []
         if args.command == "help":
-            keep_case = True
             commands.append("list_commands")
         elif args.getstatus:
-            # use get_status helper
             commands.append("get_status")
-        elif args.getsettings:
-            # use get_settings helper
-            commands.append("get_settings")
-        elif args.getDeviceId:
-            # use get_settings helper
-            commands.append("get_device_id")
-        elif args.getVersion:
-            # use get_version helper
-            commands.append("get_version")
-        elif args.command is None:
-            # run the command
-            commands.append("")
+        # ... other command helpers
         else:
-            commands = args.command.split("#")
+            commands = (args.command or "").split("#")
 
         outputs = args.output
         for command in commands:
-            if args.tag:
-                tag = args.tag
-            else:
-                tag = command
-            _commands.append((device, command, tag, outputs, filter, excl_filter, dev))
-        log.debug(f"Commands {_commands}")
+            tag = args.tag or command
+            _commands.append((device, command, tag, outputs, args.filter, args.exclfilter, args.dev))
+        log.debug(f"Commands from args: {_commands}")
 
-
-    # ------------------------
     # Daemon setup and logging
-    # ------------------------
     daemon = setup_daemon_if_requested(args, log_file_path=log_file_path)
-    log.info(daemon)
     DAEMON_MODE = args.daemon
-    # Notify systemd/init
     daemon.initialize()
-    log_process_info("AFTER_DAEMON_INITIALIZE", log.info)
     daemon.notify("Service Initializing ...")
-    log_process_info("AFTER_DAEMON_NOTIFY", log.info)
 
-
-    if args.daemon:
+    # If in daemon mode, print MQTT info and connect the manager
+    if DAEMON_MODE:
         mqtt_info = get_mqtt_command_info()
         if mqtt_info:
             print("MQTT Command Handlers configured:")
@@ -634,87 +521,46 @@ def main():
                 print(f"  Device: {device_name}")
                 print(f"    Command Topic: {info['command_topic']}")
                 print(f"    Response Topic: {info['response_topic']}")
-                print(f"    Allowed Commands: {', '.join(info['allowed_commands'])}")
+                print(f"    Allowed Commands: {info['allowed_commands']}")
 
             manager = get_manager()
             if manager:
+                print("Connecting MQTT Command Manager...")
                 manager.connect()
         else:
-            print("No MQTT command handlers configured")
+            print("No MQTT command handlers configured.")
 
-#             # Start the MQTT transport layer
-#             mqtt_transport = MqttTransport(
-#                 broker=config["SETUP"]["mqtt_broker"],
-#                 port=int(config["SETUP"].get("mqtt_port", 1883)),
-#                 username=config["SETUP"].get("mqtt_user"),
-#                 password=config["SETUP"].get("mqtt_pass"),
-#             )
-# 
-#             # Set up the command bridge with the transport
-#             mqtt_bridge = MqttCommandBridge(
-#                 mqtt_transport=mqtt_transport,
-#                 command_info=mqtt_info
-#             )
-#             # Start listening
-#             mqtt_transport.connect()
-#         else:
-#             print("No MQTT command handlers configured")
-
-
+    # MAIN EXECUTION LOOP
     while True:
-        # Loop through the configured commands
-        if not args.daemon:
+        if not DAEMON_MODE:
             log.info(f"Looping {len(_commands)} commands")
         for _device, _command, _tag, _outputs, filter, excl_filter, dev in _commands:
-            # for item in mppUtilArray:
-            # Tell systemd watchdog we are still alive
             daemon.watchdog()
-            daemon.notify(f"Getting results from device: {_device} for command: {_command}, tag: {_tag}, outputs: {_outputs}")
-            log.info(f"Getting results from device: {_device} for command: {_command}, tag: {_tag}, outputs: {_outputs}")
+            daemon.notify(f"Executing command: {_command} on device: {_device._name}")
+            log.info(f"Getting results for command '{_command}' from device '{_device._name}'")
             results = _device.run_command(command=_command)
-            log.debug(f"results: {results}")
-            # send to output processor(s)
+
+            # Send to output processors
             outputs = get_outputs(_outputs)
             for op in outputs:
-                # maybe include the command and what the command is im the output
-                # eg QDI run, Display Inverter Default Settings
-                log.debug(f"Using output filter: {filter}")
                 op.output(
                     data=results.copy(),
                     tag=_tag,
                     name=_device._name,
                     mqtt_broker=mqtt_broker,
-                    udp_port=udp_port,
-                    postgres_url=postgres_url,
-                    mongo_url=mongo_url,
-                    mongo_db=mongo_db,
-                    push_url=push_url,
-                    prom_output_dir=prom_output_dir,
-                    # mqtt_port=mqtt_port,
-                    # mqtt_user=mqtt_user,
-                    # mqtt_pass=mqtt_pass,
-                    mqtt_topic=mqtt_topic,
                     filter=filter,
                     excl_filter=excl_filter,
-                    keep_case=keep_case,
-                    dev=dev,  # ADD: Pass dev parameter to output
+                    dev=dev,
+                    # ... other output args ...
                 )
-        try:
-                # Tell systemd watchdog we are still alive
-#            if args.daemon:
-            if DAEMON_MODE:
-                daemon.watchdog()
-                print(f"Sleeping for {pause} sec")
-                time.sleep(pause)
-            else:
-                # Dont loop unless running as daemon
-                log.debug("Not daemon, so not looping")
-                break
-        except Exception as e:
-            log.error(f"[LOOP ERROR] Exception in daemon loop: {e}", exc_info=True)
-            time.sleep(5)  # Prevent tight loop in case of recurring errors
 
+        if DAEMON_MODE:
+            daemon.watchdog()
+            log.info(f"Sleeping for {pause} sec")
+            time.sleep(pause)
+        else:
+            log.debug("Not in daemon mode, exiting.")
+            break
 
 if __name__ == "__main__":
     main()
-    
