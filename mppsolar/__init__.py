@@ -515,16 +515,16 @@ def main():
         log.info(f'Creating device "{args.name}" (type: "{s_prog_name}") on port "{args.port}" ...')
 
         # Setup MQTT from args if needed for command listening (not just output)
-        if args.daemon: # Assuming commands are only needed in daemon mode
-             mqtt_broker_config = {
-                "name": args.mqttbroker,
-                "port": args.mqttport,
-                "user": args.mqttuser,
-                "pass": args.mqttpass,
-            }
-             mqtt_transport = MqttTransport(config=mqtt_broker_config)
-             get_manager(mqtt_transport=mqtt_transport)
-
+#         if args.daemon: # Assuming commands are only needed in daemon mode
+        mqtt_broker_config = {
+            "name": args.mqttbroker,
+            "port": args.mqttport,
+            "user": args.mqttuser,
+            "pass": args.mqttpass,
+        }
+        mqtt_transport = MqttTransport(config=mqtt_broker_config)
+        get_manager(mqtt_transport=mqtt_transport)
+        ###########
         # Create legacy mqtt_broker for outputs
         mqtt_broker = MqttTransport(config={
             "name": args.mqttbroker, "port": args.mqttport, "user": args.mqttuser, "pass": args.mqttpass,
