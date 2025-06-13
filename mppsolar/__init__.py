@@ -25,13 +25,17 @@ from mppsolar.daemon.daemon import (
 )
 from mppsolar.libs.mqttbrokerc import MqttTransport
 from mppsolar.libs.mqttbroker import (
-    get_manager,
+    get_output_manager,
+    get_command_manager,
+    setup_mqtt_output_manager,
+    setup_mqtt_output_manager_from_config,
+    setup_mqtt_command_manager,
     setup_device_mqtt_commands,
     get_mqtt_command_info,
-    setup_mqtt_output_broker,
-    should_setup_mqtt_command_handler,
-    setup_mqtt_command_handler,
+    cleanup_mqtt_managers,
+    # Legacy compatibility
     cleanup_mqtt_commands,
+    reset_managers,
 )
 from mppsolar.outputs import get_outputs, list_outputs
 from mppsolar.protocols import list_protocols
@@ -233,7 +237,7 @@ def main():
     parser.add_argument("-I", "--info", action="store_true", help="Enable Info and above level messages")
 
 
-    atexit.register(cleanup_mqtt_commands)
+    atexit.register(cleanup_mqtt_managers)
 
     args = parser.parse_args()
     prog_name = parser.prog
@@ -401,12 +405,12 @@ def main():
             sys.exit(1)
 
     # Centralized mqtt_broker object. It's either built from args or from the config file.
-    mqtt_broker = None
-    log.debug(mqtt_broker)
-    udp_port = args.udpport
-    log.debug(f"udp port {udp_port}")
+#     mqtt_broker = None
+#     log.debug(mqtt_broker)
+#     udp_port = args.udpport
+#     log.debug(f"udp port {udp_port}")
     postgres_url = args.postgres_url
-    log.debug(f"Using Postgres {postgres_url}")
+#     log.debug(f"Using Postgres {postgres_url}")
     mongo_url = args.mongo_url
     mongo_db = args.mongo_db
     log.debug(f"Using Mongo {mongo_url} with {mongo_db}")
@@ -447,14 +451,9 @@ def main():
             "user": config["SETUP"].get("mqtt_user"),
             "pass": config["SETUP"].get("mqtt_pass"),
         }
-#         mqtt_transport = MqttTransport(config=mqtt_broker_config)
-#         get_manager(mqtt_transport=mqtt_transport) # This creates the singleton manager
-# 
-#         # Build a single mqtt_broker object for legacy output processors
-#         mqtt_broker = MqttTransport(config=mqtt_broker_config)
-#         mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
-        mqtt_broker, enable_mqtt_output = setup_mqtt_output_broker(args, prog_name)
-
+        # Setup MQTT managers
+        setup_mqtt_command_manager(mqtt_broker_config)
+        mqtt_broker = setup_mqtt_output_manager_from_config(mqtt_broker_config, prog_name)
 
 
         sections = config.sections()
@@ -473,7 +472,7 @@ def main():
             porttype = config[section].get("porttype", fallback=None)
             filter = config[section].get("filter", fallback=None)
             excl_filter = config[section].get("exclfilter", fallback=None)
-            udp_port = config[section].get("udpport", fallback=None)
+            udp_port = config[section].get("udpport", fallback=args.udpport)
             postgres_url = config[section].get("postgres_url", fallback=None)
             mongo_url = config[section].get("mongo_url", fallback=None)
             mongo_db = config[section].get("mongo_db", fallback=None)
@@ -483,7 +482,6 @@ def main():
             section_dev = config[section].get("dev", fallback=None)
             # Get mqtt_cmds from config, this is the correct key
             mqtt_allowed_cmds = config[section].get("mqtt_cmds", fallback="")
-            section_dev = config[section].get("dev", fallback=None)
             
             # Legacy output variables
             push_url = config[section].get("push_url", fallback=args.pushurl)
@@ -544,15 +542,16 @@ def main():
             "user": args.mqttuser,
             "pass": args.mqttpass,
         }
-        mqtt_transport = MqttTransport(config=mqtt_broker_config)
-        get_manager(mqtt_transport=mqtt_transport)
-        ###########
-        # Create legacy mqtt_broker for outputs
-        mqtt_broker = MqttTransport(config={
-            "name": args.mqttbroker, "port": args.mqttport, "user": args.mqttuser, "pass": args.mqttpass,
-        })
-        mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
-
+#         mqtt_transport = MqttTransport(config=mqtt_broker_config)
+#         get_manager(mqtt_transport=mqtt_transport)
+#         ###########
+#         # Create legacy mqtt_broker for outputs
+#         mqtt_broker = MqttTransport(config={
+#             "name": args.mqttbroker, "port": args.mqttport, "user": args.mqttuser, "pass": args.mqttpass,
+#         })
+#         mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
+        setup_mqtt_command_manager(mqtt_broker_config)
+        mqtt_broker = setup_mqtt_output_manager(args, prog_name)
 
         device_class = get_device_class(s_prog_name)
         device = device_class(
@@ -562,7 +561,7 @@ def main():
             baud=args.baud,
             porttype=args.porttype,
             mqtt_broker=mqtt_broker,
-            udp_port=udp_port,
+            udp_port=args.udpport,
             mongo_url=mongo_url,
             mongo_db=mongo_db,
             push_url=push_url,
@@ -625,10 +624,14 @@ def main():
                 print(f"    Response Topic: {info['response_topic']}")
                 print(f"    Allowed Commands: {info['allowed_commands']}")
 
-            manager = get_manager()
-            if manager:
+#             manager = get_manager()
+#             if manager:
+#                 print("Connecting MQTT Command Manager...")
+#                 manager.connect()
+            command_manager = get_command_manager()
+            if command_manager:
                 print("Connecting MQTT Command Manager...")
-                manager.connect()
+                command_manager.connect()
         else:
             print("No MQTT command handlers configured.")
 
@@ -650,7 +653,7 @@ def main():
                     tag=_tag,
                     name=_device._name,
                     mqtt_broker=mqtt_broker,
-                    udp_port=udp_port,
+                    udp_port=args.udpport if not args.configfile else udp_port,
                     postgres_url=postgres_url,
                     mongo_url=mongo_url,
                     mongo_db=mongo_db,

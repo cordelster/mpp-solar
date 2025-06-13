@@ -493,7 +493,7 @@ def reset_managers():
 
 
 # High-level setup functions
-def setup_mqtt_output_manager(args, prog_name: str) -> Optional[MQTTOutputManager]:
+def setup_mqtt_output_manager(args, prog_name: str) -> Optional['MqttTransport']:
     """
     Setup MQTT output manager from arguments
     CLI arguments take precedence over config file
@@ -523,8 +523,30 @@ def setup_mqtt_output_manager(args, prog_name: str) -> Optional[MQTTOutputManage
         if not getattr(args, 'daemon', False):  # Connect immediately for non-daemon runs
             output_manager.connect()
     
-    return output_manager
+    # Return legacy-compatible MqttTransport wrapper
+    if output_manager:
+        from .mqttbrokerc import MqttTransport
+        legacy_broker = MqttTransport(config=config)
+        legacy_broker.set("results_topic", config["results_topic"])
+        return legacy_broker
+    return None
 
+def setup_mqtt_output_manager_from_config(config: dict, prog_name: str) -> Optional['MqttTransport']:
+    """Setup MQTT output manager from config dict"""
+    if not config.get("name"):
+        return None
+        
+    config["results_topic"] = prog_name
+    output_manager = get_output_manager(config)
+    if output_manager:
+        log.info("MQTT output manager configured from config")
+        
+        # Return legacy-compatible wrapper
+        from .mqttbrokerc import MqttTransport
+        legacy_broker = MqttTransport(config=config)
+        legacy_broker.set("results_topic", prog_name)
+        return legacy_broker
+    return None
 
 def setup_mqtt_command_manager(config: dict) -> Optional[MQTTCommandManager]:
     """Setup MQTT command manager from config"""
@@ -566,10 +588,10 @@ def get_mqtt_command_info() -> Dict[str, Dict[str, Any]]:
     return {}
 
 
-# Legacy compatibility functions
-def get_mqtt_command_info():
-    """Legacy compatibility - get command info"""
-    return get_mqtt_command_info()
+# # Legacy compatibility functions
+# def get_mqtt_command_info():
+#     """Legacy compatibility - get command info"""
+#     return get_mqtt_command_info()
 
 
 def cleanup_mqtt_commands():
@@ -587,7 +609,10 @@ __all__ = [
     "setup_mqtt_command_manager",
     "setup_device_mqtt_commands",
     "cleanup_mqtt_managers",
+    "setup_mqtt_output_manager_from_config",
     "get_mqtt_command_info",
+    "reset_managers",
     # Legacy compatibility
     "cleanup_mqtt_commands",
+    
 ]
