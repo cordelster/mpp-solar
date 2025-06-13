@@ -28,6 +28,9 @@ from mppsolar.libs.mqttbroker import (
     get_manager,
     setup_device_mqtt_commands,
     get_mqtt_command_info,
+    setup_mqtt_output_broker,
+    should_setup_mqtt_command_handler,
+    setup_mqtt_command_handler,
     cleanup_mqtt_commands,
 )
 from mppsolar.outputs import get_outputs, list_outputs
@@ -444,12 +447,15 @@ def main():
             "user": config["SETUP"].get("mqtt_user"),
             "pass": config["SETUP"].get("mqtt_pass"),
         }
-        mqtt_transport = MqttTransport(config=mqtt_broker_config)
-        get_manager(mqtt_transport=mqtt_transport) # This creates the singleton manager
+#         mqtt_transport = MqttTransport(config=mqtt_broker_config)
+#         get_manager(mqtt_transport=mqtt_transport) # This creates the singleton manager
+# 
+#         # Build a single mqtt_broker object for legacy output processors
+#         mqtt_broker = MqttTransport(config=mqtt_broker_config)
+#         mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
+        mqtt_broker, enable_mqtt_output = setup_mqtt_output_broker(args, prog_name)
 
-        # Build a single mqtt_broker object for legacy output processors
-        mqtt_broker = MqttTransport(config=mqtt_broker_config)
-        mqtt_broker.set("results_topic", (args.mqtttopic if args.mqtttopic is not None else prog_name))
+
 
         sections = config.sections()
         sections.remove("SETUP")
