@@ -193,11 +193,11 @@ COMMANDS = {
         "help": " -- Query general status information",
         "type": "QUERY",
         "response": [
-            ["10int", "Grid voltage", "V", {"icon": "mdi:transmission-tower", "device-class": "voltage"}],
-            ["10int", "Grid frequency", "Hz", {"icon": "mdi:sine-wave", "device-class": "frequency"}],
+            ["10int", "L1 AC Input Voltage", "V", {"icon": "mdi:transmission-tower", "device-class": "voltage"}],
+            ["10int", "L1 AC Input Frequency", "Hz", {"icon": "mdi:sine-wave", "device-class": "frequency"}],
             [
                 "10int",
-                "AC output voltage",
+                "L1 AC Output Voltage",
                 "V",
                 {"icon": "mdi:home-lightning-bolt-outline", "device-class": "voltage"},
             ],
