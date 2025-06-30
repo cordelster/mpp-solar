@@ -198,7 +198,7 @@ NEW_COMMANDS = {
             ["int", "Max Charger Current", "A"],
             ["int", "Max Charger Range", "A"],
             ["int", "Max AC Charger Current", "A"],
-            ["int", "PV1 Charging Current", "A"],
+            ["int", "PV1 Input Current", "A"],
             ["int", "Battery Discharge Current", "A"],
         ],
         "test_responses": [
