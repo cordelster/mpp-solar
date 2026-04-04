@@ -615,6 +615,12 @@ def main():
     daemon.initialize()
     log_process_info("AFTER_DAEMON_INITIALIZE", log.info)
 
+    # Single-run mode publishes once and exits — use QoS 1 so paho holds each
+    # message until the broker ACKs it, preventing drops on shutdown.
+    # Daemon mode re-publishes every cycle so QoS 0 is fine and keeps overhead low.
+    mqtt_broker.default_qos = 0 if DAEMON_MODE else 1
+    log.info(f"MQTT default QoS set to {mqtt_broker.default_qos} ({'daemon' if DAEMON_MODE else 'single-run'} mode)")
+
     # Start MQTT manager
     mqtt_manager.start_all()
     daemon.notify("Service Initializing ...")
