@@ -238,8 +238,16 @@ class MqttConnection:
         log.info(f"Stopping MQTT connection to {self.config.name}:{self.config.port}")
         self.should_stop.set()
 
+        # Block until every queued message has been processed by _publish_loop.
+        # _publish_loop calls task_done() in its finally block for each get(),
+        # so this unblocks only once all messages have been handed to paho.
+        self.publish_queue.join()
+
+        # Send the MQTT DISCONNECT packet then wait for paho's network thread
+        # to flush its internal send buffer before we return.
         if self.connected:
             self.client.disconnect()
+        self.client.loop_stop()
 
         if self.connection_thread and self.connection_thread.is_alive():
             self.connection_thread.join(timeout=5)
