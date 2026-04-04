@@ -283,16 +283,30 @@ class MqttConnection:
 
     def _publish_loop(self):
         """Background thread for publishing queued messages"""
-        while not self.should_stop.is_set():
+        # Loop until stop is requested AND the queue is fully drained
+        while not self.should_stop.is_set() or not self.publish_queue.empty():
             try:
-                # Get message from queue with timeout
-                msg_data = self.publish_queue.get(timeout=1)
+                # Short timeout so we re-check the exit condition quickly
+                msg_data = self.publish_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            try:
+                # Wait for connection rather than silently dropping the message.
+                # This covers the startup race where messages are queued before
+                # the async TCP connect completes.
+                wait_start = time.time()
+                while not self.connected:
+                    if time.time() - wait_start > 15:
+                        log.error(
+                            f"Dropping {msg_data['topic']} — not connected after 15s"
+                        )
+                        break
+                    time.sleep(0.1)
 
                 if self.connected:
                     topic = msg_data['topic']
                     payload = msg_data['payload']
-                    # FIXED: Use direct dictionary access instead of .get() with defaults
-                    # This preserves the QoS and retain values that were explicitly set
                     qos = msg_data['qos']
                     retain = msg_data['retain']
 
@@ -306,15 +320,14 @@ class MqttConnection:
                         else:
                             preview = str(payload)[:100]
                         log.debug(f"Published to {topic}: {preview}… (QoS={qos}, retain={retain})")
-                else:
-                    log.warning(f"Cannot publish to {msg_data['topic']} - not connected")
 
-            except Empty:
-                continue
             except KeyError as e:
                 log.error(f"Missing required key in message data: {e}")
             except Exception as e:
                 log.error(f"Error in publish loop: {e}")
+            finally:
+                # Always mark the task done so queue.join() can unblock in stop()
+                self.publish_queue.task_done()
 
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False):
         """Queue a message for publishing"""
