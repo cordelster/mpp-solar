@@ -68,6 +68,9 @@ class MqttConnection:
         self.publish_queue = Queue()
         self.publish_thread = None
         self.devices = {}  # device_name -> DeviceConfig
+        # MessageInfo objects for QoS>0 publishes — used in stop() to wait for
+        # broker ACKs before disconnecting (critical for single-shot mode).
+        self._inflight_msgs: list = []
 
         # Setup client callbacks
         self.client.on_connect = self._on_connect
@@ -243,17 +246,32 @@ class MqttConnection:
         # so this unblocks only once all messages have been handed to paho.
         self.publish_queue.join()
 
-        # Send the MQTT DISCONNECT packet then wait for paho's network thread
-        # to flush its internal send buffer before we return.
+        # Wait for the publish thread to fully exit before inspecting _inflight_msgs.
+        # It should exit almost immediately since the queue is empty and stop is set.
+        if self.publish_thread and self.publish_thread.is_alive():
+            self.publish_thread.join(timeout=2)
+
+        # Wait for broker ACKs on all QoS>0 messages before disconnecting.
+        # publish_queue.join() only guarantees messages were handed to paho's
+        # internal buffer — not that the broker has acknowledged them. Without
+        # this wait, disconnect() races against paho's network thread and drops
+        # unACKed messages (critical in single-shot / QoS=1 mode).
+        if self._inflight_msgs:
+            log.info(f"Waiting for {len(self._inflight_msgs)} QoS>0 message(s) to be ACKed")
+            for msg_info in self._inflight_msgs:
+                try:
+                    msg_info.wait_for_publish(timeout=5)
+                except Exception as e:
+                    log.warning(f"Timed out waiting for publish ACK: {e}")
+            self._inflight_msgs.clear()
+
+        # Now safe to disconnect — all messages are broker-acknowledged.
         if self.connected:
             self.client.disconnect()
         self.client.loop_stop()
 
         if self.connection_thread and self.connection_thread.is_alive():
             self.connection_thread.join(timeout=5)
-
-        if self.publish_thread and self.publish_thread.is_alive():
-            self.publish_thread.join(timeout=5)
 
     def _connection_loop(self):
         """Main connection management loop"""
@@ -323,6 +341,10 @@ class MqttConnection:
                     if result.rc != mqtt_client.MQTT_ERR_SUCCESS:
                         log.warning(f"Failed to publish to {topic}: {result.rc}")
                     else:
+                        if qos > 0:
+                            # Track for ACK wait in stop() — ensures all QoS>0
+                            # messages are broker-acknowledged before disconnect.
+                            self._inflight_msgs.append(result)
                         if isinstance(payload, (bytes, str)):
                             preview = payload[:100]
                         else:
