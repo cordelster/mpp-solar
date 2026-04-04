@@ -157,10 +157,9 @@ class hassd_mqtt(mqtt):
                         }
                     )
 
-                # msg = {"topic": topic, "payload": payload, "retain": True}
                 payloads = js.dumps(payload)
-                # print(payloads)
-                msg = {"topic": topic, "payload": payloads}
+                # Retain config/autodiscovery so HA picks it up after a restart
+                msg = {"topic": topic, "payload": payloads, "retain": True}
                 config_msgs.append(msg)
                 #
                 # VALUE SETTING
@@ -168,7 +167,8 @@ class hassd_mqtt(mqtt):
                 # 'tag'/status/total_output_active_power/value 1250
                 # 'tag'/status/total_output_active_power/unit W
                 topic = f"homeassistant/{sensor}/mpp_{tag}_{key}/state"
-                msg = {"topic": topic, "payload": value}
+                # State messages are time-sensitive — do not retain stale values
+                msg = {"topic": topic, "payload": value, "retain": False}
                 value_msgs.append(msg)
         return config_msgs, value_msgs
 
