@@ -1,6 +1,6 @@
 import logging
 
-from .pi18 import pi18_v2
+from .pi18_v2 import pi18_v2
 
 log = logging.getLogger("pi18lvx_v2")
 
